@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import hmac
+import ipaddress
 import mimetypes
 import os
 import secrets
@@ -68,6 +69,11 @@ class Join(Login):
     name: str = Field(min_length=1, max_length=60)
 
 
+class LocalSetup(Login):
+    name: str = Field(min_length=1, max_length=60)
+    samples: bool = True
+
+
 class Invitation(BaseModel):
     email: str = Field(max_length=254)
     role: str = 'member'
@@ -96,7 +102,8 @@ class UserEdit(BaseModel):
     active: bool
 
 
-def create_app(state_dir=None, storage_dir=None, origin=None, secure=None):
+def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local_test=None):
+    local_mode = local_test if local_test is not None else os.environ.get('LOCAL_TEST_MODE') == '1'
     state = Path(state_dir or os.environ.get('STATE_DIR', ROOT / 'state')).resolve()
     storage = Path(storage_dir or os.environ.get('STORAGE_DIR', ROOT / 'data')).resolve()
     public_origin = (origin or os.environ.get('PUBLIC_ORIGIN', 'https://sasutendo.tech')).rstrip('/')
@@ -212,10 +219,38 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None):
     def health():
         return {'ok': True}
 
+    def is_loopback(request):
+        try:
+            return bool(request.client and ipaddress.ip_address(request.client.host).is_loopback)
+        except ValueError:
+            return False
+
     @app.get('/api/status')
-    def status():
+    def status(request: Request):
         with db() as con:
-            return {'configured': bool(con.execute('SELECT 1 FROM users WHERE role="owner"').fetchone())}
+            return {'configured': bool(con.execute('SELECT 1 FROM users WHERE role="owner"').fetchone()), 'local_test': bool(local_mode and is_loopback(request))}
+
+    if local_mode:
+        @app.post('/api/local-setup')
+        def local_setup(body: LocalSetup, request: Request):
+            if not is_loopback(request):
+                raise HTTPException(403, 'Local setup is available only from this PC.')
+            if len(body.password) < 10:
+                raise HTTPException(400, 'Choose a password with at least 10 characters.')
+            name, email = body.name.strip(), email_address(body.email)
+            if not name:
+                raise HTTPException(400, 'Enter your name.')
+            hashed = hash_password(body.password)
+            with db() as con:
+                con.execute('BEGIN IMMEDIATE')
+                if con.execute('SELECT 1 FROM users WHERE role="owner"').fetchone():
+                    raise HTTPException(409, 'The local owner is already set up. Sign in with that account.')
+                user_id = uid()
+                con.execute('INSERT INTO users(id,email,name,password,role,created) VALUES(?,?,?,?,"owner",?)', (user_id, email, name, hashed, time.time()))
+                if body.samples:
+                    from .demo import seed_samples
+                    seed_samples(con, storage, user_id)
+                return session(con, user_id)
 
     @app.post('/api/login')
     def login(body: Login, request: Request):
