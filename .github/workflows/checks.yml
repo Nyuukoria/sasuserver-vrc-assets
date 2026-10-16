@@ -27,7 +27,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - run: python -m pip download --dest wheels --platform win_amd64 --python-version 313 --implementation cp --abi cp313 --only-binary=:all: -r requirements.txt colorama==0.4.6
+      - run: >-
+          python -m pip download --dest wheels --platform win_amd64 --python-version 313 --implementation cp --abi cp313 --only-binary=:all: -r requirements.txt colorama==0.4.6
       - run: Invoke-WebRequest https://www.python.org/ftp/python/3.13.16/python-3.13.16-embed-amd64.zip -OutFile python-windows.zip
       - run: python scripts/build-offline-windows.py --python-zip python-windows.zip --wheels wheels --output offline-output/Sasu-Drive-Offline-Windows.zip
       - run: python scripts/smoke-local-windows.py offline-output/Sasu-Drive-Offline-Windows.zip
