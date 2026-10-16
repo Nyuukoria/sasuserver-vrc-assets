@@ -1,0 +1,47 @@
+services:
+  drive:
+    build: .
+    restart: unless-stopped
+    environment:
+      PUBLIC_ORIGIN: https://${DOMAIN:-sasutendo.tech}
+      STORAGE_CAPACITY_BYTES: ${STORAGE_CAPACITY_BYTES:-4000000000000}
+      COOKIE_SECURE: "true"
+      STATE_DIR: /state
+      STORAGE_DIR: /storage
+    volumes:
+      - app_state:/state
+      - type: bind
+        source: ${DRIVE_STORAGE_PATH:?Set DRIVE_STORAGE_PATH in .env to your mounted storage disk directory}
+        target: /storage
+        bind:
+          create_host_path: false
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp:size=32m,mode=1777]
+    networks: [drive]
+  caddy:
+    image: caddy:2.11.6-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-sasutendo.tech}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env for HTTPS certificates}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      drive:
+        condition: service_healthy
+    networks: [drive]
+networks:
+  drive:
+volumes:
+  app_state:
+  caddy_data:
+  caddy_config:

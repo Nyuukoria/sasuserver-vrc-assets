@@ -1,0 +1,14 @@
+{
+    email {$ACME_EMAIL}
+}
+{$DOMAIN} {
+    request_body {
+        max_size 10MB
+    }
+    header Strict-Transport-Security "max-age=31536000"
+    encode zstd gzip
+    reverse_proxy drive:8000
+}
+www.{$DOMAIN} {
+    redir https://{$DOMAIN}{uri} permanent
+}
