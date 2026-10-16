@@ -5,7 +5,7 @@ const {JSDOM} = require('jsdom');
 const html = readFileSync('web/index.html','utf8');
 const source = readFileSync('web/app.js','utf8');
 async function waitFor(check) { for(let i=0;i<100;i++){ if(check())return; await new Promise(r=>setImmediate(r)); } throw new Error('UI did not settle'); }
-function environment(role='owner', invited=false) {
+function environment(role='owner', invited=false, local=false) {
  const dom = new JSDOM(html,{url:'https://sasutendo.tech/'+(invited?'?invite=fake-test-invitation-token':''),runScripts:'outside-only'});
  const w=dom.window, requests=[],items=[],uploads=new Map();let signedIn=false, next=1;
  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
@@ -15,8 +15,8 @@ function environment(role='owner', invited=false) {
   const method=options.method||'GET';requests.push({path:u.pathname,method,body,headers:options.headers});
   const respond=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
   if(u.pathname==='/api/me')return signedIn?respond({id:'test-user',name:'Yuuki',email:'owner@example.com',role,csrf:'fake-csrf'}):respond({detail:'Sign in'},401);
-  if(u.pathname==='/api/status')return respond({configured:true});
-  if(u.pathname==='/api/login'||u.pathname==='/api/join'){signedIn=true;return respond({ok:true});}
+  if(u.pathname==='/api/status')return respond({configured:!local,local_test:local});
+  if(u.pathname==='/api/login'||u.pathname==='/api/join'||u.pathname==='/api/local-setup'){signedIn=true;return respond({ok:true});}
   if(u.pathname==='/api/invite')return respond({email:'friend@example.com',role:'member',expires:2e9});
   if(u.pathname==='/api/stats')return respond({files:items.filter(i=>i.kind==='file').length,folders:items.filter(i=>i.kind==='folder').length,members:1,used:3,capacity:4e12});
   if(u.pathname==='/api/nodes'&&method==='GET')return respond({items:items.filter(i=>!u.searchParams.get('q')||i.name.includes(u.searchParams.get('q'))),breadcrumbs:[],total:items.length});
@@ -50,3 +50,6 @@ test('folder upload preserves nested paths and finalizes file content',async()=>
 test('invitation screen binds email and removes token after joining',async()=>{const e=environment('member',true);try{await waitFor(()=>e.w.document.querySelector('#auth-title').textContent==='You’re invited.');assert.equal(e.w.document.querySelector('#auth-email').value,'friend@example.com');assert.equal(e.w.document.querySelector('#auth-email').readOnly,true);e.w.document.querySelector('#auth-name').value='Friend';e.w.document.querySelector('#auth-password').value='test-password';e.w.document.querySelector('#auth-form').dispatchEvent(new e.w.Event('submit',{cancelable:true}));await waitFor(()=>!e.w.document.querySelector('#drive-screen').hidden);assert.equal(e.w.location.search,'');assert.equal(e.requests.find(r=>r.path==='/api/join').body.email,'friend@example.com');}finally{e.dom.window.close();}});
 
 test('owner invitation flow returns a copyable private link',async()=>{const e=environment();try{await login(e);e.w.document.querySelector('#invite-button').click();const form=e.w.document.querySelector('#dialog-form');form.elements.email.value='friend@example.com';form.dispatchEvent(new e.w.Event('submit',{cancelable:true}));await waitFor(()=>e.w.document.querySelector('#copy-invite'));assert.match(e.w.document.querySelector('.invite-link-box').textContent,/invite=single-use-test-link/);assert.match(e.w.document.querySelector('#dialog-body').textContent,/No email has been sent automatically/);}finally{e.dom.window.close();}});
+
+
+test('local first launch creates an owner with optional samples',async()=>{const e=environment('owner',false,true);try{await waitFor(()=>e.w.document.querySelector('#auth-title').textContent==='Make yourself at home.');assert.equal(e.w.document.querySelector('#samples-label').hidden,false);e.w.document.querySelector('#auth-name').value='Yuuki';e.w.document.querySelector('#auth-email').value='local@example.com';e.w.document.querySelector('#auth-password').value='local-test-password';e.w.document.querySelector('#auth-form').dispatchEvent(new e.w.Event('submit',{cancelable:true}));await waitFor(()=>!e.w.document.querySelector('#drive-screen').hidden);const setup=e.requests.find(r=>r.path==='/api/local-setup');assert.equal(setup.body.samples,true);assert.equal(setup.body.name,'Yuuki');assert.equal(e.w.document.querySelector('#local-test-banner').hidden,false);}finally{e.dom.window.close();}});
