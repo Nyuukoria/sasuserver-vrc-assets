@@ -1,20 +1,23 @@
-# Sasu Drive
+# Nyuukoria Drive
 
 A private home for avatar assets, worlds, folders, and everything else your invited
 circle makes. Built for **sasutendo.tech**, hosted on your own storage VPS.
 
-A warm rose-and-cream interface with dark mode, a responsive sidebar, list/grid
+A dark interface with rose accents and an optional light theme, a responsive sidebar, list/grid
 views, live storage usage, and a calm empty state. There is no public sign-up and
 no public file sharing.
 
 ## Try it locally before buying a server
 
-Use the complete **Sasu-Drive-Offline-Windows.zip**, extract it, and double-click
+Use the complete **Nyuukoria-Drive-Offline-Windows.zip**, extract it, and double-click
 **START-WINDOWS.bat**. It opens the real website on this PC, with optional sample
 folders and working uploads. No hosting or domain changes are needed.
 See [local test instructions](docs/LOCAL-TEST.md) for source setup and details.
 
 ## What works
+
+- Custom profile pictures and display names, folder covers, and uploader avatars with upload times.
+- Back/up navigation, browser history, media collections, image thumbnails, and server-side sorting.
 
 - Owner-created, email-bound, single-use invitation links with expiration and revocation.
 - Owner, member (browse/upload), and viewer (browse/download) accounts.

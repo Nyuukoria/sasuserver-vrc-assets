@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Sasu Drive - Local Test
+title Nyuukoria Drive - Local Test
 if exist "runtime\python.exe" (
   "runtime\python.exe" "run-local.py"
   goto stopped
@@ -10,7 +10,7 @@ if exist ".venv\Scripts\python.exe" goto checkdeps
 where py >nul 2>&1
 if errorlevel 1 (
   echo This source download needs Python 3.12 or newer.
-  echo For a completely offline start, use the Sasu-Drive-Offline-Windows ZIP.
+  echo For a completely offline start, use the Nyuukoria-Drive-Offline-Windows ZIP.
   goto stopped
 )
 py -3 -c "import sys; assert sys.version_info >= (3,12)" >nul 2>&1
@@ -30,5 +30,5 @@ if errorlevel 1 (
 ".venv\Scripts\python.exe" "run-local.py"
 :stopped
 echo.
-echo Sasu Drive has stopped. Your local test files have been kept.
+echo Nyuukoria Drive has stopped. Your local test files have been kept.
 pause

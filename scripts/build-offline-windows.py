@@ -31,7 +31,7 @@ def main():
     if len(wheels) < 15:
         raise SystemExit('Dependency wheels are missing; see docs/LOCAL-TEST.md.')
     with tempfile.TemporaryDirectory() as temp:
-        bundle = Path(temp) / 'Sasu-Drive-Offline-Windows'
+        bundle = Path(temp) / 'Nyuukoria-Drive-Offline-Windows'
         bundle.mkdir()
         for directory in ('backend', 'web'):
             shutil.copytree(ROOT / directory, bundle / directory, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
