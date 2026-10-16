@@ -18,7 +18,7 @@ def main():
     with tempfile.TemporaryDirectory() as temp:
         with zipfile.ZipFile(args.zip) as archive:
             archive.extractall(temp)
-        root = Path(temp) / 'Sasu-Drive-Offline-Windows'
+        root = Path(temp) / 'Nyuukoria-Drive-Offline-Windows'
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
@@ -49,7 +49,7 @@ def main():
                 with opener.open(req, timeout=10) as response:
                     content = response.read()
                     return content if raw else json.loads(content)
-            assert b'Make room for' in request('/', raw=True) or b'Sasu' in request('/', raw=True)
+            assert b'Nyuukoria Drive' in request('/', raw=True)
             assert request('/api/status')['local_test'] is True
             request('/api/local-setup', 'POST', {'name': 'Local tester', 'email': 'local@example.com', 'password': 'offline-test-password', 'samples': True})
             csrf = request('/api/me')['csrf']
@@ -58,6 +58,11 @@ def main():
             request('/api/uploads/' + upload['id'], 'PATCH', b'abc', extra={'Upload-Offset': '0', 'Content-Type': 'application/octet-stream'})
             node = request('/api/uploads/' + upload['id'] + '/complete', 'POST')['id']
             assert request('/api/nodes/' + node + '/download', raw=True) == b'abc'
+            picture=request('/api/me/avatar','POST',(root/'web/assets/nyuukoria.png').read_bytes())['url']
+            assert request(picture,raw=True).startswith(b'RIFF')
+            folder=request('/api/folders','POST',{'name':'Covered folder'})['id']
+            cover=request('/api/nodes/'+folder+'/cover','POST',(root/'web/assets/nyuukoria.png').read_bytes())['url']
+            assert request(cover,raw=True).startswith(b'RIFF')
             invite = request('/api/invites', 'POST', {'email': 'friend@example.com'})
             assert invite['url'].startswith(url + '/?invite=')
             print('Portable Windows runtime: local setup, samples, upload, download and invitation passed.')

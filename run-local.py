@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Run Sasu Drive privately on this PC.')
+    parser = argparse.ArgumentParser(description='Run Nyuukoria Drive privately on this PC.')
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--port', type=int, default=8765)
     args = parser.parse_args()
@@ -29,7 +29,7 @@ def main():
         except OSError:
             candidate.close()
     if listener is None:
-        raise SystemExit('The local test ports are busy. Close the previous Sasu Drive window and try again.')
+        raise SystemExit('The local test ports are busy. Close the previous Nyuukoria Drive window and try again.')
     url = f'http://127.0.0.1:{port}'
     os.environ.update({
         'PUBLIC_ORIGIN': url,
@@ -45,7 +45,7 @@ def main():
     except ImportError as error:
         listener.close()
         raise SystemExit('Runtime dependencies are missing. Use the complete offline Windows ZIP, or install requirements.txt first.\n' + str(error))
-    print('\nSasu Drive - local test\n')
+    print('\nNyuukoria Drive - local test\n')
     print('Open: ' + url)
     print('Test files: ' + str(ROOT / 'local-test-data'))
     print('Only this PC can connect. The test storage limit is 20 GB.')

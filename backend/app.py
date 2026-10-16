@@ -102,6 +102,10 @@ class UserEdit(BaseModel):
     active: bool
 
 
+class ProfileEdit(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+
+
 def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local_test=None):
     local_mode = local_test if local_test is not None else os.environ.get('LOCAL_TEST_MODE') == '1'
     state = Path(state_dir or os.environ.get('STATE_DIR', ROOT / 'state')).resolve()
@@ -130,7 +134,11 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
 
     with db() as con:
         con.executescript((ROOT / 'backend/schema.sql').read_text())
-    app = FastAPI(title='Sasu Drive', docs_url=None, redoc_url=None, openapi_url=None)
+        # Additive migrations keep existing accounts, uploads and local test data.
+        for table, column in [('users', 'avatar'), ('nodes', 'cover')]:
+            if column not in {row['name'] for row in con.execute('PRAGMA table_info(' + table + ')')}:
+                con.execute('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' TEXT')
+    app = FastAPI(title='Nyuukoria Drive', docs_url=None, redoc_url=None, openapi_url=None)
     app.state.db = db
     app.state.storage = storage
     upload_locks = {}
@@ -191,7 +199,10 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
 
     def view_node(con, item, user):
         result = dict(item)
-        result['owner_name'] = con.execute('SELECT name FROM users WHERE id=?', (item['owner'],)).fetchone()[0]
+        uploader = con.execute('SELECT name,avatar FROM users WHERE id=?', (item['owner'],)).fetchone()
+        result['owner_name'] = uploader['name']
+        result['owner_avatar'] = picture_url(uploader['avatar'])
+        result['cover_url'] = picture_url(item['cover'])
         result['starred'] = bool(con.execute('SELECT 1 FROM stars WHERE user_id=? AND node_id=?', (user['id'], item['id'])).fetchone())
         if item['kind'] == 'folder':
             result['children'] = con.execute('SELECT COUNT(*) FROM nodes WHERE parent=? AND deleted IS NULL', (item['id'],)).fetchone()[0]
@@ -301,7 +312,86 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
     def me(request: Request):
         with db() as con:
             user = current_user(request, con)
-            return {key: user[key] for key in ('id', 'email', 'name', 'role', 'csrf')}
+            return {**{key: user[key] for key in ('id', 'email', 'name', 'role', 'csrf')}, 'avatar_url': picture_url(user['avatar'])}
+
+    def picture_url(picture_id):
+        return '/api/pictures/' + picture_id if picture_id else None
+
+    @app.patch('/api/me')
+    def edit_profile(body: ProfileEdit, request: Request):
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(400, 'Enter a display name.')
+        with db() as con:
+            user = current_user(request, con)
+            con.execute('UPDATE users SET name=? WHERE id=?', (name, user['id']))
+        return {'ok': True}
+
+    async def picture_change(request, folder_id=None, remove=False):
+        with db() as con:
+            user = current_user(request, con, write=bool(folder_id))
+            if folder_id:
+                item = node(con, folder_id)
+                if item['kind'] != 'folder':
+                    raise HTTPException(400, 'Only folders can have a cover.')
+                can_change(con, item, user)
+        content = None
+        if not remove:
+            from .pictures import normalize_picture
+            data = bytearray()
+            async for chunk in request.stream():
+                data.extend(chunk)
+                if len(data) > 8 * 1024 * 1024:
+                    raise HTTPException(413, 'Choose an image smaller than 8 MB.')
+            content = await run_in_threadpool(normalize_picture, bytes(data), bool(folder_id))
+        with db() as con:
+            con.execute('BEGIN IMMEDIATE')
+            user = current_user(request, con, write=bool(folder_id))
+            if folder_id:
+                item = node(con, folder_id)
+                can_change(con, item, user)
+            previous = item['cover'] if folder_id else user['avatar']
+            picture_id = uid() if content else None
+            if content:
+                used = con.execute('SELECT COALESCE(SUM(size),0) FROM nodes WHERE kind="file"').fetchone()[0]
+                pictures = con.execute('SELECT COALESCE(SUM(length(data)),0) FROM pictures').fetchone()[0]
+                pending = con.execute('SELECT COALESCE(SUM(size),0) FROM uploads WHERE node_id IS NULL').fetchone()[0]
+                if used + pictures + pending + len(content) > capacity:
+                    raise HTTPException(507, 'The drive is full. Free some space first.')
+                con.execute('INSERT INTO pictures(id,data) VALUES(?,?)', (picture_id, content))
+            if folder_id:
+                con.execute('UPDATE nodes SET cover=?,updated=? WHERE id=?', (picture_id, time.time(), folder_id))
+            else:
+                con.execute('UPDATE users SET avatar=? WHERE id=?', (picture_id, user['id']))
+            if previous:
+                con.execute('DELETE FROM pictures WHERE id=?', (previous,))
+        return {'url': picture_url(picture_id)}
+
+    @app.post('/api/me/avatar')
+    async def change_avatar(request: Request):
+        return await picture_change(request)
+
+    @app.delete('/api/me/avatar')
+    async def remove_avatar(request: Request):
+        return await picture_change(request, remove=True)
+
+    @app.post('/api/nodes/{node_id}/cover')
+    async def change_cover(node_id: str, request: Request):
+        return await picture_change(request, node_id)
+
+    @app.delete('/api/nodes/{node_id}/cover')
+    async def remove_cover(node_id: str, request: Request):
+        return await picture_change(request, node_id, remove=True)
+
+    @app.get('/api/pictures/{picture_id}')
+    def picture(picture_id: str, request: Request):
+        from fastapi.responses import Response
+        with db() as con:
+            current_user(request, con)
+            row = con.execute('SELECT data FROM pictures WHERE id=? AND (EXISTS(SELECT 1 FROM users WHERE avatar=?) OR EXISTS(SELECT 1 FROM nodes WHERE cover=? AND deleted IS NULL))', (picture_id, picture_id, picture_id)).fetchone()
+            if not row:
+                raise HTTPException(404, 'This picture is no longer available.')
+            return Response(bytes(row['data']), media_type='image/webp', headers={'Content-Security-Policy': "default-src 'none'; sandbox"})
 
     @app.post('/api/logout')
     def logout(request: Request):
@@ -316,7 +406,7 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
     def admin(request: Request):
         with db() as con:
             current_user(request, con, owner=True)
-            users = [dict(x) for x in con.execute('SELECT id,name,email,role,active,created FROM users ORDER BY created')]
+            users = [{**dict(x), 'avatar_url': picture_url(x['avatar'])} for x in con.execute('SELECT id,name,email,role,active,created,avatar FROM users ORDER BY created')]
             invites = [dict(x) for x in con.execute('SELECT id,email,role,created,expires,used,revoked FROM invites ORDER BY created DESC')]
             return {'users': users, 'invites': invites}
 
@@ -358,12 +448,13 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             current_user(request, con)
             disk = shutil.disk_usage(storage)
             used = con.execute('SELECT COALESCE(SUM(size),0) FROM nodes WHERE kind="file"').fetchone()[0]
+            used += con.execute('SELECT COALESCE(SUM(length(data)),0) FROM pictures').fetchone()[0]
             pending = con.execute('SELECT COALESCE(SUM(offset),0) FROM uploads WHERE node_id IS NULL').fetchone()[0]
             counts = dict(con.execute('SELECT kind,COUNT(*) FROM nodes WHERE deleted IS NULL GROUP BY kind').fetchall())
             return {'used': used, 'pending': pending, 'capacity': min(capacity, disk.total), 'free': disk.free, 'files': counts.get('file', 0), 'folders': counts.get('folder', 0), 'members': con.execute('SELECT COUNT(*) FROM users WHERE active=1').fetchone()[0]}
 
     @app.get('/api/nodes')
-    def list_nodes(request: Request, parent: str | None = None, view: str = 'files', q: str = '', offset: int = 0, limit: int = 200):
+    def list_nodes(request: Request, parent: str | None = None, view: str = 'files', q: str = '', offset: int = 0, limit: int = 200, sort: str = 'updated'):
         if offset < 0 or not 1 <= limit <= 1000:
             raise HTTPException(400, 'Invalid page size or offset.')
         with db() as con:
@@ -376,6 +467,10 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
                 args.append(user['id'])
             elif view == 'images':
                 conditions += ['n.kind="file"', 'n.mime LIKE "image/%"']
+            elif view == 'videos':
+                conditions += ['n.kind="file"', 'n.mime LIKE "video/%"']
+            elif view == 'audio':
+                conditions += ['n.kind="file"', 'n.mime LIKE "audio/%"']
             elif view == 'archives':
                 conditions += ['n.kind="file"', '(LOWER(n.name) LIKE "%.zip" OR LOWER(n.name) LIKE "%.rar" OR LOWER(n.name) LIKE "%.7z" OR LOWER(n.name) LIKE "%.unitypackage")']
             elif view != 'recent' and not q:
@@ -387,7 +482,8 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
                 args.append(q[:200])
             clause = ' AND '.join(conditions)
             total = con.execute('SELECT COUNT(*) FROM nodes n WHERE ' + clause, args).fetchone()[0]
-            rows = con.execute('SELECT n.* FROM nodes n WHERE ' + clause + ' ORDER BY n.kind DESC,n.updated DESC,n.id LIMIT ? OFFSET ?', [*args, limit, offset]).fetchall()
+            ordering = {'updated': 'n.updated DESC', 'created': 'n.created DESC', 'name': 'n.name COLLATE NOCASE', 'size': 'n.size DESC'}.get(sort, 'n.updated DESC')
+            rows = con.execute('SELECT n.* FROM nodes n WHERE ' + clause + ' ORDER BY n.kind DESC,' + ordering + ',n.id LIMIT ? OFFSET ?', [*args, limit, offset]).fetchall()
             breadcrumbs, cursor = [], parent
             while cursor:
                 folder = node(con, cursor)
@@ -468,7 +564,7 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             if item['deleted'] is None or item['trash_root'] != node_id:
                 raise HTTPException(400, 'Move this item to trash first.')
             # Purging a subtree must also handle independently trashed descendants.
-            all_rows = con.execute('WITH RECURSIVE tree AS (SELECT id,kind FROM nodes WHERE id=? UNION ALL SELECT n.id,n.kind FROM nodes n JOIN tree t ON n.parent=t.id) SELECT * FROM tree', (node_id,)).fetchall()
+            all_rows = con.execute('WITH RECURSIVE tree AS (SELECT id,kind,cover FROM nodes WHERE id=? UNION ALL SELECT n.id,n.kind,n.cover FROM nodes n JOIN tree t ON n.parent=t.id) SELECT * FROM tree', (node_id,)).fetchall()
             tree = 'WITH RECURSIVE tree(id) AS (SELECT ? UNION ALL SELECT n.id FROM nodes n JOIN tree t ON n.parent=t.id) '
             if con.execute(tree + 'SELECT 1 FROM uploads WHERE node_id IS NULL AND parent IN tree LIMIT 1', (node_id,)).fetchone():
                 raise HTTPException(409, 'Cancel unfinished uploads in this folder before deleting it permanently.')
@@ -476,6 +572,9 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             con.execute(tree + 'DELETE FROM uploads WHERE parent IN tree OR node_id IN tree', (node_id,))
             con.execute('PRAGMA defer_foreign_keys=ON')
             con.execute(tree + 'DELETE FROM nodes WHERE id IN tree', (node_id,))
+            for row in all_rows:
+                if row['cover']:
+                    con.execute('DELETE FROM pictures WHERE id=?', (row['cover'],))
             audit(con, user, 'permanently deleted', item['name'])
         for row in all_rows:
             if row['kind'] == 'file':
@@ -505,6 +604,7 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             if con.execute('SELECT 1 FROM uploads WHERE parent IS ? AND name=? COLLATE NOCASE AND node_id IS NULL', (body.parent, name)).fetchone():
                 raise HTTPException(409, 'An upload with this name is already in progress. Resume or cancel it first.')
             used = con.execute('SELECT COALESCE(SUM(size),0) FROM nodes').fetchone()[0]
+            used += con.execute('SELECT COALESCE(SUM(length(data)),0) FROM pictures').fetchone()[0]
             reserved = con.execute('SELECT COALESCE(SUM(size),0) FROM uploads WHERE node_id IS NULL').fetchone()[0]
             pending_bytes = con.execute('SELECT COALESCE(SUM(offset),0) FROM uploads WHERE node_id IS NULL').fetchone()[0]
             if used + reserved + body.size > capacity or body.size + reserved - pending_bytes > max(0, shutil.disk_usage(storage).free - 64 * 1024 * 1024):
@@ -512,7 +612,8 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             upload_id, now = uid(), time.time()
             with (storage / 'uploads' / upload_id).open('xb'):
                 pass
-            con.execute('INSERT INTO uploads(id,user_id,parent,name,size,mime,created,updated) VALUES(?,?,?,?,?,?,?,?)', (upload_id, user['id'], body.parent, name, body.size, body.mime, now, now))
+            mime = mimetypes.guess_type(name)[0] or body.mime
+            con.execute('INSERT INTO uploads(id,user_id,parent,name,size,mime,created,updated) VALUES(?,?,?,?,?,?,?,?)', (upload_id, user['id'], body.parent, name, body.size, mime, now, now))
             return {'id': upload_id, 'offset': 0, 'chunk_size': CHUNK}
 
     def owned_upload(con, upload_id, user):
