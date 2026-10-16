@@ -21,7 +21,7 @@ if errorlevel 1 (
 py -3 -m venv .venv
 if errorlevel 1 goto stopped
 :checkdeps
-".venv\Scripts\python.exe" -c "import fastapi, uvicorn" >nul 2>&1
+".venv\Scripts\python.exe" -c "import fastapi, uvicorn, PIL" >nul 2>&1
 if errorlevel 1 (
   echo Installing dependencies. This first source-only setup needs internet.
   ".venv\Scripts\python.exe" -m pip install -r requirements.txt
