@@ -260,7 +260,7 @@ def test_search_and_pagination(app):
 def test_login_rate_limit_survives_errors(app):
     outsider = TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN})
     for _ in range(8):
-        assert outsider.post('/api/login', json={'email': 'nobody@example.com', 'password': 'wrong'}).status_code == 401
+        assert outsider.post('/api/login', json={'email': 'nobody@example.com', 'password': 'wrongpass'}).status_code == 401
     assert outsider.post('/api/login', json={'email': 'nobody@example.com', 'password': 'wrong'}).status_code == 429
 
 
