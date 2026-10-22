@@ -1,8 +1,7 @@
-"""Sasu Drive: one private workspace, invited accounts, streamed local-disk storage."""
+"""Nyuukoria Drive: one private workspace, invited accounts, streamed local-disk storage."""
 import asyncio
 import hashlib
 import hmac
-import ipaddress
 import mimetypes
 import os
 import secrets
@@ -69,11 +68,6 @@ class Join(Login):
     name: str = Field(min_length=1, max_length=60)
 
 
-class LocalSetup(Login):
-    name: str = Field(min_length=1, max_length=60)
-    samples: bool = True
-
-
 class Invitation(BaseModel):
     email: str = Field(max_length=254)
     role: str = 'member'
@@ -113,8 +107,7 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(min_length=6, max_length=256)
 
 
-def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local_test=None):
-    local_mode = local_test if local_test is not None else os.environ.get('LOCAL_TEST_MODE') == '1'
+def create_app(state_dir=None, storage_dir=None, origin=None, secure=None):
     state = Path(state_dir or os.environ.get('STATE_DIR', ROOT / 'state')).resolve()
     storage = Path(storage_dir or os.environ.get('STORAGE_DIR', ROOT / 'data')).resolve()
     public_origin = (origin or os.environ.get('PUBLIC_ORIGIN', 'https://sasutendo.tech')).rstrip('/')
@@ -142,7 +135,7 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
 
     with db() as con:
         con.executescript((ROOT / 'backend/schema.sql').read_text())
-        # Additive migrations keep existing accounts, uploads and local test data.
+        # Additive migrations keep existing accounts, uploads and pictures.
         for table, column in [('users', 'avatar'), ('users', 'banner'), ('users', 'bio'), ('users', 'theme_color'), ('nodes', 'cover')]:
             if column not in {row['name'] for row in con.execute('PRAGMA table_info(' + table + ')')}:
                 con.execute('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' TEXT')
@@ -243,6 +236,8 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
         response.headers.setdefault('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
         if request.url.path.startswith('/api/'):
             response.headers['Cache-Control'] = 'no-store'
+        elif request.url.path == '/' or request.url.path.endswith(('.html', '.js', '.css')):
+            response.headers['Cache-Control'] = 'no-cache'
         return response
 
     @app.exception_handler(sqlite3.IntegrityError)
@@ -261,7 +256,7 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             rows = con.execute('''
                 SELECT c.id, c.body, c.created, u.id AS user_id, u.name AS user_name, u.avatar 
                 FROM comments c JOIN users u ON c.user_id = u.id 
-                WHERE c.node_id = ? ORDER BY c.created ASC
+                WHERE c.node_id = ? ORDER BY c.created ASC, c.id ASC
             ''', (node_id,)).fetchall()
             return [{
                 **dict(r),
@@ -270,13 +265,16 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
 
     @app.post('/api/nodes/{node_id}/comments')
     def add_comment(node_id: str, body: CommentCreate, request: Request):
+        text = body.body.strip()
+        if not text:
+            raise HTTPException(400, 'Write a comment before sending.')
         with db() as con:
             user = current_user(request, con, write=True)
             con.execute('BEGIN IMMEDIATE')
             node(con, node_id)
             comment_id = uid()
             now = time.time()
-            con.execute('INSERT INTO comments(id,node_id,user_id,body,created) VALUES(?,?,?,?,?)', (comment_id, node_id, user['id'], body.body.strip(), now))
+            con.execute('INSERT INTO comments(id,node_id,user_id,body,created) VALUES(?,?,?,?,?)', (comment_id, node_id, user['id'], text, now))
             audit(con, user, 'commented on', node(con, node_id)['name'])
             return {'ok': True, 'id': comment_id, 'created': now}
 
@@ -288,6 +286,7 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             comment = con.execute('SELECT * FROM comments WHERE id=?', (comment_id,)).fetchone()
             if not comment:
                 raise HTTPException(404, 'Comment not found.')
+            node(con, comment['node_id'])
             if user['role'] != 'owner' and comment['user_id'] != user['id']:
                 raise HTTPException(403, 'You can only delete your own comments.')
             con.execute('DELETE FROM comments WHERE id=?', (comment_id,))
@@ -319,40 +318,10 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             audit(con, current_user(request, con), 'removed user', target['email'])
             return {'ok': True}
 
-    def is_loopback(request):
-        try:
-            return bool(request.client and ipaddress.ip_address(request.client.host).is_loopback)
-        except ValueError:
-            return False
-
-    
-
     @app.get('/api/status')
-    def status(request: Request):
+    def status():
         with db() as con:
-            return {'configured': bool(con.execute('SELECT 1 FROM users WHERE role="owner"').fetchone()), 'local_test': bool(local_mode and is_loopback(request))}
-
-    if local_mode:
-        @app.post('/api/local-setup')
-        def local_setup(body: LocalSetup, request: Request):
-            if not is_loopback(request):
-                raise HTTPException(403, 'Local setup is available only from this PC.')
-            if len(body.password) < 6:
-                raise HTTPException(400, 'Choose a password with at least 6 characters.')
-            name, email = body.name.strip(), email_address(body.email)
-            if not name:
-                raise HTTPException(400, 'Enter your name.')
-            hashed = hash_password(body.password)
-            with db() as con:
-                con.execute('BEGIN IMMEDIATE')
-                if con.execute('SELECT 1 FROM users WHERE role="owner"').fetchone():
-                    raise HTTPException(409, 'The local owner is already set up. Sign in with that account.')
-                user_id = uid()
-                con.execute('INSERT INTO users(id,email,name,password,role,created) VALUES(?,?,?,?,"owner",?)', (user_id, email, name, hashed, time.time()))
-                if body.samples:
-                    from .demo import seed_samples
-                    seed_samples(con, storage, user_id)
-                return session(con, user_id)
+            return {'configured': bool(con.execute('SELECT 1 FROM users WHERE role="owner"').fetchone())}
 
     @app.post('/api/login')
     def login(body: Login, request: Request):
@@ -497,7 +466,9 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             row = con.execute('SELECT data FROM pictures WHERE id=? AND (EXISTS(SELECT 1 FROM users WHERE avatar=? OR banner=?) OR EXISTS(SELECT 1 FROM nodes WHERE cover=? AND deleted IS NULL))', (picture_id, picture_id, picture_id, picture_id)).fetchone()
             if not row:
                 raise HTTPException(404, 'This picture is no longer available.')
-            return Response(bytes(row['data']), media_type='image/webp', headers={'Content-Security-Policy': "default-src 'none'; sandbox"})
+            content = bytes(row['data'])
+            mime = 'image/gif' if content.startswith((b'GIF87a', b'GIF89a')) else 'image/webp'
+            return Response(content, media_type=mime, headers={'Content-Security-Policy': "default-src 'none'; sandbox"})
 
     @app.post('/api/logout')
     def logout(request: Request):
