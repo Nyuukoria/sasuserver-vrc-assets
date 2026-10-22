@@ -211,6 +211,7 @@ async function moveDialog(item,parent) {
   $('#confirm-move').onclick=async()=>{try{await api(`/nodes/${item.id}`,{method:'PATCH',body:JSON.stringify({parent,move:true})});$('#dialog').close();$('#inspector').hidden=true;await loadFiles();toast('Item moved.');}catch(e){toast(e.message,true);}};
  }catch(e){toast(e.message,true);}
 }
+
 let activeHoverCard = null;
 
 async function loadMembers() {
@@ -585,67 +586,6 @@ async function inspectMember(userId) {
   } catch (e) {
     toast(e.message, true);
   }
-}
-
-// Make Member List Rows Clickable
-async function loadMembers() {
-  const data = await api('/admin');
-  $('#members-list').innerHTML = data.users
-    .map(
-      (user) => `
-    <div class="member-row ${user.active ? '' : 'inactive'}" style="cursor:pointer;" data-member-id="${esc(user.id)}">
-      ${avatar(user.avatar_url, user.name, 'avatar')}
-      <div class="member-info">
-        <strong>${esc(user.name)}${user.id === state.user.id ? ' (you)' : ''}</strong>
-        <small>${esc(user.email)}</small>
-      </div>
-      <span class="role-tag">${esc(user.role)}</span>
-    </div>`
-    )
-    .join('');
-
-  $$('[data-member-id]').forEach((el) => {
-    el.onclick = () => inspectMember(el.dataset.memberId);
-  });
-
-  $('#invites-list').innerHTML = data.invites.length
-    ? data.invites
-        .map((inv) => {
-          const status = inv.used
-            ? 'Accepted'
-            : inv.revoked
-            ? 'Revoked'
-            : inv.expires < Date.now() / 1000
-            ? 'Expired'
-            : 'Pending';
-          return `<div class="member-row"><span class="avatar">${icon(
-            'user-plus'
-          )}</span><div class="member-info"><strong>${esc(
-            inv.email
-          )}</strong><small>${esc(inv.role)} access · expires ${date(
-            inv.expires
-          )}</small></div><span class="role-tag">${status}</span>${
-            status === 'Pending'
-              ? `<button class="button quiet" data-revoke="${esc(
-                  inv.id
-                )}">Revoke</button>`
-              : ''
-          }</div>`;
-        })
-        .join('')
-    : '<p class="muted">No invitations yet. Create one to give someone access.</p>';
-
-  $$('[data-revoke]').forEach((el) =>
-    (el.onclick = async () => {
-      try {
-        await api(`/invites/${el.dataset.revoke}`, { method: 'DELETE' });
-        await loadMembers();
-        toast('Invitation revoked.');
-      } catch (e) {
-        toast(e.message, true);
-      }
-    })
-  );
 }
 
 // Make Members Dashboard Card Clickable
