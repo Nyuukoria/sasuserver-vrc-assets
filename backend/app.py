@@ -439,7 +439,7 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
                 data.extend(chunk)
                 if len(data) > 8 * 1024 * 1024:
                     raise HTTPException(413, 'Choose an image smaller than 8 MB.')
-            content = await run_in_threadpool(normalize_picture, bytes(data), bool(folder_id or is_banner))
+            content = await run_in_threadpool(normalize_picture, bytes(data), bool(folder_id), bool(is_banner))
         with db() as con:
             con.execute('BEGIN IMMEDIATE')
             user = current_user(request, con, write=bool(folder_id))
