@@ -39,3 +39,13 @@ CREATE TABLE IF NOT EXISTS attempts (key TEXT NOT NULL, created REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS attempts_key ON attempts(key,created);
 
 CREATE UNIQUE INDEX IF NOT EXISTS pending_upload_name ON uploads(COALESCE(parent,''),name COLLATE NOCASE) WHERE node_id IS NULL;
+
+CREATE TABLE IF NOT EXISTS comments (
+    id TEXT PRIMARY KEY,
+    node_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created REAL NOT NULL,
+    FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);

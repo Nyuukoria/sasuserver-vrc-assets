@@ -149,6 +149,23 @@ function updateSelection() {
  $('#trash-selection').hidden = !canWrite(); $('#trash-selection').textContent = state.view==='trash' ? 'Restore selected' : 'Move to trash';
  $$('.file-row').forEach(row=>row.classList.toggle('selected',state.selected.has(row.dataset.id)));
 }
+async function loadComments(nodeId) {
+  const container = $('#comments-list-container');
+  if (!container) return;
+  try {
+    const comments = await api(`/nodes/${nodeId}/comments`);
+    container.innerHTML = comments.length ? comments.map(c => `
+      <div class="comment-item">
+        <div class="comment-header">
+          <strong>${esc(c.user_name)}</strong>
+          <small class="muted">${stamp(c.created)}</small>
+        </div>
+        <div>${esc(c.body)}</div>
+      </div>
+    `).join('') : '<p class="muted" style="font-size:11px;">No comments yet. Start the conversation!</p>';
+  } catch {}
+}
+
 function inspect(item) {
  const [type,color,label] = fileStyle(item); const trashed = state.view==='trash'; const url = `/api/nodes/${encodeURIComponent(item.id)}/download`;
  let preview = item.kind==='folder'?`<img src="${esc(item.cover_url||'/assets/nyuukoria.png')}" alt="Folder cover">`:icon(type); const extension = item.name.split('.').pop().toLowerCase();
@@ -156,7 +173,23 @@ function inspect(item) {
  if (!trashed && ['mp4','webm'].includes(extension)) preview=`<video controls preload="metadata" src="${url}?preview=true"></video>`;
  if (!trashed && ['mp3','ogg','wav'].includes(extension)) preview=`<audio controls preload="metadata" src="${url}?preview=true"></audio>`;
  const el=$('#inspector'); el.hidden=false;
- el.innerHTML=`<div class="inspector-head"><strong>File details</strong><button id="inspector-close" class="icon-button" aria-label="Close details">${icon('x')}</button></div><div class="preview-box ${color}">${preview}</div><h3>${esc(item.name)}</h3><dl class="detail-list"><dt>Type</dt><dd>${label}</dd><dt>Size</dt><dd>${item.kind==='folder'?`${item.children} items`:bytes(item.size)}</dd><dt>Uploaded by</dt><dd class="uploader-detail">${avatar(item.owner_avatar,item.owner_name)}${esc(item.owner_name)}</dd><dt>Uploaded</dt><dd>${stamp(item.created)}</dd><dt>Modified</dt><dd>${stamp(item.updated)}</dd></dl><div class="inspector-actions">${!trashed ? (item.kind==='file'?`<a class="button primary" href="${url}">${icon('download')} Download file</a>`:`<button class="button primary" id="open-folder">${icon('folder')} Open folder</button>`)+`<button class="button subtle" id="star-item">${icon('star')} ${item.starred?'Remove star':'Add to starred'}</button>`:''}${canChange(item) ? trashed ? `<button class="button subtle" id="restore-item">${icon('restore')} Restore item</button>` : `${item.kind==='folder'?`<button class="button subtle" id="cover-item">${icon('image')} ${item.cover_url?'Change':'Add'} folder cover</button>${item.cover_url?'<button class="button quiet" id="remove-cover">Remove cover</button>':''}`:''}<button class="button subtle" id="rename-item">${icon('edit')} Rename</button><button class="button subtle" id="move-item">${icon('folder')} Move to folder</button><button class="button quiet" id="trash-item">${icon('trash')} Move to trash</button>`:''}${trashed&&state.user.role==='owner'?'<button class="button danger" id="purge-item">Delete permanently</button>':''}</div>`;
+ el.innerHTML=`<div class="inspector-head"><strong>File details</strong><button id="inspector-close" class="icon-button" aria-label="Close details">${icon('x')}</button></div><div class="preview-box ${color}">${preview}</div><h3>${esc(item.name)}</h3><dl class="detail-list"><dt>Type</dt><dd>${label}</dd><dt>Size</dt><dd>${item.kind==='folder'?`${item.children} items`:bytes(item.size)}</dd><dt>Uploaded by</dt><dd class="uploader-detail">${avatar(item.owner_avatar,item.owner_name)}${esc(item.owner_name)}</dd><dt>Uploaded</dt><dd>${stamp(item.created)}</dd><dt>Modified</dt><dd>${stamp(item.updated)}</dd></dl><div class="inspector-actions">${!trashed ? (item.kind==='file'?`<a class="button primary" href="${url}">${icon('download')} Download file</a>`:`<button class="button primary" id="open-folder">${icon('folder')} Open folder</button>`)+`<button class="button subtle" id="star-item">${icon('star')} ${item.starred?'Remove star':'Add to starred'}</button>`:''}${canChange(item) ? trashed ? `<button class="button subtle" id="restore-item">${icon('restore')} Restore item</button>` : `${item.kind==='folder'?`<button class="button subtle" id="cover-item">${icon('image')} ${item.cover_url?'Change':'Add'} folder cover</button>${item.cover_url?'<button class="button quiet" id="remove-cover">Remove cover</button>':''}`:''}<button class="button subtle" id="rename-item">${icon('edit')} Rename</button><button class="button subtle" id="move-item">${icon('folder')} Move to folder</button><button class="button quiet" id="trash-item">${icon('trash')} Move to trash</button>`:''}${trashed&&state.user.role==='owner'?'<button class="button danger" id="purge-item">Delete permanently</button>':''}</div><div class="comments-section"><strong>Comments</strong><div id="comments-list-container" style="margin-top:8px;"></div><form id="comment-form" class="comment-input-box"><input type="text" id="comment-input" placeholder="Write a comment..." required maxlength="1000"><button type="submit" class="button primary" style="padding:8px 12px;">Send</button></form></div>`;
+ 
+ loadComments(item.id);
+ $('#comment-form').onsubmit = async e => {
+  e.preventDefault();
+  const input = $('#comment-input');
+  const body = input.value.trim();
+  if (!body) return;
+  try {
+   await post(`/nodes/${item.id}/comments`, { body });
+   input.value = '';
+   await loadComments(item.id);
+  } catch (err) {
+   toast(err.message, true);
+  }
+ };
+
  $('#inspector-close').onclick=()=>el.hidden=true;
  if($('#cover-item'))$('#cover-item').onclick=()=>choosePicture(`/nodes/${item.id}/cover`,async()=>{await loadFiles();const updated=state.items.find(i=>i.id===item.id);if(updated)inspect(updated);});
  if($('#remove-cover'))$('#remove-cover').onclick=async()=>{try{await api(`/nodes/${item.id}/cover`,{method:'DELETE'});item.cover_url=null;inspect(item);await loadFiles();toast('Folder cover removed.');}catch(e){toast(e.message,true);}};
@@ -178,12 +211,59 @@ async function moveDialog(item,parent) {
   $('#confirm-move').onclick=async()=>{try{await api(`/nodes/${item.id}`,{method:'PATCH',body:JSON.stringify({parent,move:true})});$('#dialog').close();$('#inspector').hidden=true;await loadFiles();toast('Item moved.');}catch(e){toast(e.message,true);}};
  }catch(e){toast(e.message,true);}
 }
+let activeHoverCard = null;
+
 async function loadMembers() {
- const data=await api('/admin');
- $('#members-list').innerHTML=data.users.map(user=>`<div class="member-row ${user.active?'':'inactive'}">${avatar(user.avatar_url,user.name,'avatar')}<div class="member-info"><strong>${esc(user.name)}${user.id===state.user.id?' (you)':''}</strong><small>${esc(user.email)}</small></div><span class="role-tag">${esc(user.role)}</span>${user.role!=='owner'?`<button class="button quiet" data-user="${esc(user.id)}" data-active="${user.active?'0':'1'}">${user.active?'Disable':'Enable'}</button>`:''}</div>`).join('');
- $$('[data-user]').forEach(el=>el.onclick=async()=>{try{await api(`/users/${el.dataset.user}`,{method:'PATCH',body:JSON.stringify({active:el.dataset.active==='1'})});await Promise.all([loadMembers(),refreshStats()]);toast(el.dataset.active==='1'?'Account enabled.':'Access removed and active sessions signed out.');}catch(e){toast(e.message,true);}});
- $('#invites-list').innerHTML=data.invites.length?data.invites.map(inv=>{const status=inv.used?'Accepted':inv.revoked?'Revoked':inv.expires<Date.now()/1000?'Expired':'Pending';return `<div class="member-row"><span class="avatar">${icon('user-plus')}</span><div class="member-info"><strong>${esc(inv.email)}</strong><small>${esc(inv.role)} access · expires ${date(inv.expires)}</small></div><span class="role-tag">${status}</span>${status==='Pending'?`<button class="button quiet" data-revoke="${esc(inv.id)}">Revoke</button>`:''}</div>`;}).join(''):'<p class="muted">No invitations yet. Create one to give someone access.</p>';
- $$('[data-revoke]').forEach(el=>el.onclick=async()=>{try{await api(`/invites/${el.dataset.revoke}`,{method:'DELETE'});await loadMembers();toast('Invitation revoked.');}catch(e){toast(e.message,true);}});
+  const data = await api('/admin');
+  $('#members-list').innerHTML = data.users.map(user => `
+    <div class="member-row ${user.active ? '' : 'inactive'}" style="cursor:pointer;" data-member-id="${esc(user.id)}">
+      ${avatar(user.avatar_url, user.name, 'avatar')}
+      <div class="member-info">
+        <strong>${esc(user.name)}${user.id === state.user.id ? ' (you)' : ''}</strong>
+        <small>${esc(user.email)}</small>
+      </div>
+      <span class="role-tag">${esc(user.role)}</span>
+    </div>
+  `).join('');
+
+  $$('[data-member-id]').forEach(el => {
+    const userId = el.dataset.memberId;
+    el.onclick = () => inspectMember(userId);
+    el.onmouseenter = async () => {
+      if (activeHoverCard) activeHoverCard.remove();
+      const member = data.users.find(u => u.id === userId);
+      if (!member) return;
+      const card = document.createElement('div');
+      card.className = 'member-hover-card';
+      card.innerHTML = `
+        <div class="member-hover-banner" style="${member.banner_url ? `background-image:url(${esc(member.banner_url)})` : ''}"></div>
+        <div class="member-hover-body">
+          <div class="member-hover-avatar">
+            ${member.avatar_url ? `<img src="${esc(member.avatar_url)}" alt="">` : esc(member.name.slice(0,1).toUpperCase())}
+          </div>
+          <div style="margin-left: 60px;">
+            <strong style="font-size:13px; display:block; margin-top:-5px;">${esc(member.name)}</strong>
+            <small class="muted">${esc(member.role)}</small>
+          </div>
+          ${member.bio ? `<p style="font-size:11px; color:var(--muted); margin:8px 0 0 0; white-space:pre-wrap;">${esc(member.bio)}</p>` : ''}
+        </div>
+      `;
+      document.body.appendChild(card);
+      const rect = el.getBoundingClientRect();
+      card.style.top = `${window.scrollY + rect.bottom + 6}px`;
+      card.style.left = `${window.scrollX + rect.left}px`;
+      activeHoverCard = card;
+    };
+    el.onmouseleave = () => {
+      if (activeHoverCard) { activeHoverCard.remove(); activeHoverCard = null; }
+    };
+  });
+
+  $('#invites-list').innerHTML = data.invites.length ? data.invites.map(inv => {
+    const status = inv.used ? 'Accepted' : inv.revoked ? 'Revoked' : inv.expires < Date.now() / 1000 ? 'Expired' : 'Pending';
+    return `<div class="member-row"><span class="avatar">${icon('user-plus')}</span><div class="member-info"><strong>${esc(inv.email)}</strong><small>${esc(inv.role)} access · expires ${date(inv.expires)}</small></div><span class="role-tag">${status}</span>${status === 'Pending' ? `<button class="button quiet" data-revoke="${esc(inv.id)}">Revoke</button>` : ''}</div>`;
+  }).join('') : '<p class="muted">No invitations yet. Create one to give someone access.</p>';
+  $$('[data-revoke]').forEach(el => el.onclick = async () => { try { await api(`/invites/${el.dataset.revoke}`, {method:'DELETE'}); await loadMembers(); toast('Invitation revoked.'); } catch(e) { toast(e.message, true); } });
 }
 function inviteDialog() {
  formDialog('Invite a member',`<p>Send a private invitation link to someone you trust. They’ll choose their own password when they join.</p><label>Their email address<input type="email" name="email" placeholder="friend@example.com" required></label><label>They can…<select name="role"><option value="member">Browse and upload · Member</option><option value="viewer">Browse and download · Viewer</option></select></label><label>Invitation expires in<select name="days"><option value="7">7 days</option><option value="1">24 hours</option><option value="30">30 days</option></select></label>`,async f=>{

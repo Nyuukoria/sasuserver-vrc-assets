@@ -10,6 +10,10 @@ def normalize_picture(data, cover=False):
             if source.width * source.height > 16_000_000:
                 raise HTTPException(400, 'Choose an image with no more than 16 million pixels.')
             source.seek(0)
+            if source.format == 'GIF':
+                output = io.BytesIO()
+                source.save(output, format='GIF', save_all=True)
+                return output.getvalue()
             image = ImageOps.exif_transpose(source).convert('RGB')
             image = ImageOps.fit(image, (960, 540) if cover else (256, 256), method=Image.Resampling.LANCZOS)
             output = io.BytesIO()

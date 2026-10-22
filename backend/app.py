@@ -196,6 +196,9 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
         if parent and node(con, parent)['kind'] != 'folder':
             raise HTTPException(400, 'Choose a folder as the destination.')
 
+    class CommentCreate(BaseModel):
+        body: str = Field(min_length=1, max_length=1000)
+
     def can_change(con, item, user):
         if user['role'] == 'owner':
             return
@@ -250,6 +253,46 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
     def health():
         return {'ok': True}
 
+    @app.get('/api/nodes/{node_id}/comments')
+    def get_comments(node_id: str, request: Request):
+        with db() as con:
+            current_user(request, con)
+            node(con, node_id)
+            rows = con.execute('''
+                SELECT c.id, c.body, c.created, u.id AS user_id, u.name AS user_name, u.avatar 
+                FROM comments c JOIN users u ON c.user_id = u.id 
+                WHERE c.node_id = ? ORDER BY c.created ASC
+            ''', (node_id,)).fetchall()
+            return [{
+                **dict(r),
+                'user_avatar': picture_url(r['avatar'])
+            } for r in rows]
+
+    @app.post('/api/nodes/{node_id}/comments')
+    def add_comment(node_id: str, body: CommentCreate, request: Request):
+        with db() as con:
+            user = current_user(request, con, write=True)
+            con.execute('BEGIN IMMEDIATE')
+            node(con, node_id)
+            comment_id = uid()
+            now = time.time()
+            con.execute('INSERT INTO comments(id,node_id,user_id,body,created) VALUES(?,?,?,?,?)', (comment_id, node_id, user['id'], body.body.strip(), now))
+            audit(con, user, 'commented on', node(con, node_id)['name'])
+            return {'ok': True, 'id': comment_id, 'created': now}
+
+    @app.delete('/api/comments/{comment_id}')
+    def delete_comment(comment_id: str, request: Request):
+        with db() as con:
+            user = current_user(request, con, write=True)
+            con.execute('BEGIN IMMEDIATE')
+            comment = con.execute('SELECT * FROM comments WHERE id=?', (comment_id,)).fetchone()
+            if not comment:
+                raise HTTPException(404, 'Comment not found.')
+            if user['role'] != 'owner' and comment['user_id'] != user['id']:
+                raise HTTPException(403, 'You can only delete your own comments.')
+            con.execute('DELETE FROM comments WHERE id=?', (comment_id,))
+            return {'ok': True}
+
     @app.get('/api/users/{user_id}')
     def get_user_profile(user_id: str, request: Request):
         with db() as con:
@@ -281,6 +324,8 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             return bool(request.client and ipaddress.ip_address(request.client.host).is_loopback)
         except ValueError:
             return False
+
+    
 
     @app.get('/api/status')
     def status(request: Request):
@@ -467,7 +512,7 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
     def admin(request: Request):
         with db() as con:
             current_user(request, con, owner=True)
-            users = [{**dict(x), 'avatar_url': picture_url(x['avatar'])} for x in con.execute('SELECT id,name,email,role,active,created,avatar FROM users ORDER BY created')]
+            users = [{**dict(x), 'avatar_url': picture_url(x['avatar']), 'banner_url': picture_url(x['banner'])} for x in con.execute('SELECT id,name,email,role,active,created,avatar,banner FROM users ORDER BY created')]
             invites = [dict(x) for x in con.execute('SELECT id,email,role,created,expires,used,revoked FROM invites ORDER BY created DESC')]
             return {'users': users, 'invites': invites}
 
