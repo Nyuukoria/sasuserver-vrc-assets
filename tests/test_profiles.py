@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from PIL import Image
 from backend.app import create_app, hash_password
-from backend.demo import palette_png
+from image_helpers import palette_png
 from test_drive import app, client_for, upload_file, ORIGIN
 
 
@@ -97,9 +97,9 @@ def test_additive_migration_keeps_existing_accounts_and_files(tmp_path):
         con.executescript((Path(__file__).parents[1] / 'backend/schema.sql').read_text())
         con.execute('INSERT INTO users(id,email,name,password,role,created) VALUES(?,?,?,?,?,?)', ('old', 'old@example.com', 'Old user', hash_password('old-password'), 'owner', time.time()))
         con.execute('INSERT INTO nodes(id,name,kind,owner,created,updated) VALUES(?,?,?,?,?,?)', ('old-folder', 'Existing folder', 'folder', 'old', time.time(), time.time()))
-    application = create_app(state, storage, ORIGIN, True, local_test=False)
+    application = create_app(state, storage, ORIGIN, True)
     with application.state.db() as con:
         assert con.execute('SELECT avatar FROM users WHERE id="old"').fetchone()[0] is None
         assert con.execute('SELECT cover,name FROM nodes').fetchone()['name'] == 'Existing folder'
     # Opening a second time is safe too.
-    create_app(state, storage, ORIGIN, True, local_test=False)
+    create_app(state, storage, ORIGIN, True)

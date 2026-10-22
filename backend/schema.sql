@@ -50,9 +50,4 @@ CREATE TABLE IF NOT EXISTS comments (
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-
-CREATE TABLE IF NOT EXISTS users (
- id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL,
- password TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('owner','member','viewer')),
- active INTEGER NOT NULL DEFAULT 1, created REAL NOT NULL, avatar TEXT, banner TEXT
-);
+CREATE INDEX IF NOT EXISTS comments_node_created ON comments(node_id,created,id);

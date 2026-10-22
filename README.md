@@ -7,16 +7,10 @@ A dark interface with rose accents and an optional light theme, a responsive sid
 views, live storage usage, and a calm empty state. There is no public sign-up and
 no public file sharing.
 
-## Try it locally before buying a server
-
-Use the complete **Nyuukoria-Drive-Offline-Windows.zip**, extract it, and double-click
-**START-WINDOWS.bat**. It opens the real website on this PC, with optional sample
-folders and working uploads. No hosting or domain changes are needed.
-See [local test instructions](docs/LOCAL-TEST.md) for source setup and details.
-
 ## What works
 
-- Custom profile pictures and display names, folder covers, and uploader avatars with upload times.
+- Profile pictures, animated GIFs, banners, bios, display names, folder covers, and uploader avatars with upload times.
+- File and folder comments: members can post and remove their own comments; the owner can moderate; viewers can read.
 - Back/up navigation, browser history, media collections, image thumbnails, and server-side sorting.
 
 - Owner-created, email-bound, single-use invitation links with expiration and revocation.
@@ -34,30 +28,22 @@ See [local test instructions](docs/LOCAL-TEST.md) for source setup and details.
   from the server console. The initial owner can only be created from that console.
 - Local filesystem storage with SQLite metadata; Docker Compose + Caddy HTTPS.
 
-## Hosting recommendation
+## Updating the running server
 
-**HostBRR Hybrid 4TB (EPYC, Frankfurt)** is the cost-conscious match for this app.
-The live configurator checked on **2026-10-16** advertised:
+After merging changes into `main`, run these commands from the repository directory:
 
-| Plan | HDD storage | vCPU | RAM | NVMe boot | Monthly transfer | Advertised monthly price |
-| --- | --- | --- | --- | --- | --- | --- |
-| Hybrid 4TB | 4 TB RAID-6 | 2 | 4 GB | 60 GB | 20 TB at up to 10 Gbps | €10.00 before VAT |
-| Hybrid 8TB | 8 TB RAID-6 | 4 | 8 GB | 120 GB | 40 TB at up to 10 Gbps | €20.00 before VAT |
+```sh
+git pull --ff-only origin main
+sudo docker compose up -d --build --force-recreate drive
+sudo docker compose ps drive
+sudo docker compose logs --tail=50 drive
+```
 
-Both list IPv4 and IPv6 plus full root access. Pick 8 TB if you expect rapid growth
-or need at least 4 TB available **after** filesystem overhead and other stored data.
-The network rate is a listed uplink, not a guaranteed personal transfer speed.
-
-- [HostBRR Hybrid Storage VPS configurator](https://hostbrr.com/hybrid-storage-vps.html)
-- [Provider's EPYC storage package list](https://my.hostbrr.com/order/main/packages/BF2025/?group_id=62&currency=EUR)
-- [Live provider status](https://hostbrr.com/status.html)
-
-Prices are the advertised monthly totals observed in the public configurator;
-checkout availability, VAT, renewal terms, and optional backups must be confirmed
-before paying. No server has been purchased or provisioned for this repository.
-Choose a **VPS with root access and dedicated IPv4**, not a shared Storagebox or
-NAT-only VPS, for the included Docker deployment. RAID redundancy does not replace
-an independent backup of the storage volume and metadata database.
+This rebuilds the app and bundled frontend. The existing `app_state` volume keeps
+accounts, profiles, pictures and comments; the storage bind mount keeps uploads.
+Caddy can keep running for an app-only update. Reload the browser after deployment.
+The former offline launcher, sample content and browser owner-setup mode have
+been removed. The server-console owner setup and password recovery remain available.
 
 ## Put it online
 
@@ -75,23 +61,10 @@ The website and uploads run on the VPS. This project is **not** a Cloudflare Pag
 app; Pages cannot store a 4 TB local filesystem or run this Python server.
 The separate `nyuukoria.tech` personal website and its Pages/KV setup are untouched.
 
-## Local development
+## Development checks
 
-Python 3.12 is the tested version. No frontend build is required.
-
-```sh
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements-dev.txt
-export PUBLIC_ORIGIN=http://localhost:8000
-export COOKIE_SECURE=false
-python -m backend.manage create-owner
-uvicorn backend.app:app --host 127.0.0.1 --port 8000 --workers 1
-```
-
-Open exactly `http://localhost:8000` so the browser origin matches the configured
-origin. The `COOKIE_SECURE=false` setting is for local HTTP testing only; Compose
-enables secure cookies and production HTTPS.
+Python 3.12 is the tested version. Install `requirements-dev.txt` in a virtual
+environment before running the backend checks. No frontend build is required.
 
 ```sh
 python -m pytest -q

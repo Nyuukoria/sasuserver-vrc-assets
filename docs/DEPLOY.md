@@ -171,10 +171,17 @@ varies by browser and operating system.
 
 ```sh
 cd /opt/sasu-drive
-git pull --ff-only
-sudo docker compose up -d --build
-sudo docker compose logs --tail=80 drive
+git pull --ff-only origin main
+sudo docker compose up -d --build --force-recreate drive
+sudo docker compose ps drive
+sudo docker compose logs --tail=50 drive
 ```
+
+Merge the desired pull request into `main` first. For app/frontend changes,
+Caddy can stay running. The image includes `web/`, so rebuilding `drive` updates
+banner and comment code too. Reload the browser; use Ctrl+F5 once if an older
+script or stylesheet is still displayed. Accounts, profiles, pictures and comments
+remain in `app_state`; uploaded files remain on the mounted storage disk.
 
 Do not increase the Uvicorn worker count or run multiple app replicas. Chunk
 serialization is designed for one application process on one VPS.
