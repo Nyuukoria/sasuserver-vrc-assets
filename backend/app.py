@@ -61,7 +61,7 @@ def email_address(value):
 
 class Login(BaseModel):
     email: str = Field(max_length=254)
-    password: str = Field(min_length=1, max_length=256)
+    password: str = Field(min_length=6, max_length=256)
 
 
 class Join(Login):
@@ -104,6 +104,13 @@ class UserEdit(BaseModel):
 
 class ProfileEdit(BaseModel):
     name: str = Field(min_length=1, max_length=60)
+    bio: str = Field(default='', max_length=500)
+    theme_color: str = Field(default='', max_length=30)
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6, max_length=256)
 
 
 def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local_test=None):
@@ -116,6 +123,7 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
     state.mkdir(parents=True, exist_ok=True)
     for part in ('objects', 'uploads'):
         (storage / part).mkdir(parents=True, exist_ok=True)
+
     database = state / 'drive.sqlite3'
 
     @contextmanager
@@ -135,9 +143,10 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
     with db() as con:
         con.executescript((ROOT / 'backend/schema.sql').read_text())
         # Additive migrations keep existing accounts, uploads and local test data.
-        for table, column in [('users', 'avatar'), ('nodes', 'cover')]:
+        for table, column in [('users', 'avatar'), ('users', 'banner'), ('users', 'bio'), ('users', 'theme_color'), ('nodes', 'cover')]:
             if column not in {row['name'] for row in con.execute('PRAGMA table_info(' + table + ')')}:
                 con.execute('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' TEXT')
+
     app = FastAPI(title='Nyuukoria Drive', docs_url=None, redoc_url=None, openapi_url=None)
     app.state.db = db
     app.state.storage = storage
@@ -208,6 +217,17 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             result['children'] = con.execute('SELECT COUNT(*) FROM nodes WHERE parent=? AND deleted IS NULL', (item['id'],)).fetchone()[0]
         return result
 
+    @app.post('/api/auth/change-password')
+    def change_password(body: PasswordChangeRequest, request: Request):
+        with db() as con:
+            con.execute('BEGIN IMMEDIATE')
+            user = current_user(request, con, write=True)
+            if not check_password(body.current_password, user['password']):
+                raise HTTPException(400, 'Incorrect current password.')
+            con.execute('UPDATE users SET password=? WHERE id=?', (hash_password(body.new_password), user['id']))
+            audit(con, user, 'changed password', user['name'])
+        return {'ok': True}
+
     @app.middleware('http')
     async def safeguards(request, call_next):
         if request.url.path.startswith('/api/') and request.method not in ('GET', 'HEAD', 'OPTIONS'):
@@ -246,8 +266,8 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
         def local_setup(body: LocalSetup, request: Request):
             if not is_loopback(request):
                 raise HTTPException(403, 'Local setup is available only from this PC.')
-            if len(body.password) < 10:
-                raise HTTPException(400, 'Choose a password with at least 10 characters.')
+            if len(body.password) < 6:
+                raise HTTPException(400, 'Choose a password with at least 6 characters.')
             name, email = body.name.strip(), email_address(body.email)
             if not name:
                 raise HTTPException(400, 'Enter your name.')
@@ -267,7 +287,6 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
     def login(body: Login, request: Request):
         email = email_address(body.email)
         key = digest((request.client.host if request.client else '') + ':' + email)
-        # Commit attempts separately so failed logins cannot roll the limiter back.
         with db() as con:
             con.execute('BEGIN IMMEDIATE')
             throttle(con, key)
@@ -289,8 +308,8 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
 
     @app.post('/api/join')
     def join(body: Join, request: Request):
-        if len(body.password) < 10:
-            raise HTTPException(400, 'Choose a password with at least 10 characters.')
+        if len(body.password) < 6:
+            raise HTTPException(400, 'Choose a password with at least 6 characters.')
         email, name = email_address(body.email), body.name.strip()
         if not name:
             raise HTTPException(400, 'Enter your name.')
@@ -312,7 +331,11 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
     def me(request: Request):
         with db() as con:
             user = current_user(request, con)
-            return {**{key: user[key] for key in ('id', 'email', 'name', 'role', 'csrf')}, 'avatar_url': picture_url(user['avatar'])}
+            return {
+                **{key: user[key] for key in ('id', 'email', 'name', 'role', 'csrf', 'bio', 'theme_color')},
+                'avatar_url': picture_url(user['avatar']),
+                'banner_url': picture_url(user['banner'])
+            }
 
     def picture_url(picture_id):
         return '/api/pictures/' + picture_id if picture_id else None
@@ -320,14 +343,16 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
     @app.patch('/api/me')
     def edit_profile(body: ProfileEdit, request: Request):
         name = body.name.strip()
+        bio = body.bio.strip()
+        theme_color = body.theme_color.strip()
         if not name:
             raise HTTPException(400, 'Enter a display name.')
         with db() as con:
             user = current_user(request, con)
-            con.execute('UPDATE users SET name=? WHERE id=?', (name, user['id']))
+            con.execute('UPDATE users SET name=?, bio=?, theme_color=? WHERE id=?', (name, bio, theme_color, user['id']))
         return {'ok': True}
 
-    async def picture_change(request, folder_id=None, remove=False):
+    async def picture_change(request, folder_id=None, remove=False, is_banner=False):
         with db() as con:
             user = current_user(request, con, write=bool(folder_id))
             if folder_id:
@@ -343,14 +368,14 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
                 data.extend(chunk)
                 if len(data) > 8 * 1024 * 1024:
                     raise HTTPException(413, 'Choose an image smaller than 8 MB.')
-            content = await run_in_threadpool(normalize_picture, bytes(data), bool(folder_id))
+            content = await run_in_threadpool(normalize_picture, bytes(data), bool(folder_id or is_banner))
         with db() as con:
             con.execute('BEGIN IMMEDIATE')
             user = current_user(request, con, write=bool(folder_id))
             if folder_id:
                 item = node(con, folder_id)
                 can_change(con, item, user)
-            previous = item['cover'] if folder_id else user['avatar']
+            previous = item['cover'] if folder_id else (user['banner'] if is_banner else user['avatar'])
             picture_id = uid() if content else None
             if content:
                 used = con.execute('SELECT COALESCE(SUM(size),0) FROM nodes WHERE kind="file"').fetchone()[0]
@@ -361,6 +386,8 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
                 con.execute('INSERT INTO pictures(id,data) VALUES(?,?)', (picture_id, content))
             if folder_id:
                 con.execute('UPDATE nodes SET cover=?,updated=? WHERE id=?', (picture_id, time.time(), folder_id))
+            elif is_banner:
+                con.execute('UPDATE users SET banner=? WHERE id=?', (picture_id, user['id']))
             else:
                 con.execute('UPDATE users SET avatar=? WHERE id=?', (picture_id, user['id']))
             if previous:
@@ -375,6 +402,14 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
     async def remove_avatar(request: Request):
         return await picture_change(request, remove=True)
 
+    @app.post('/api/me/banner')
+    async def change_banner(request: Request):
+        return await picture_change(request, is_banner=True)
+
+    @app.delete('/api/me/banner')
+    async def remove_banner(request: Request):
+        return await picture_change(request, remove=True, is_banner=True)
+
     @app.post('/api/nodes/{node_id}/cover')
     async def change_cover(node_id: str, request: Request):
         return await picture_change(request, node_id)
@@ -388,7 +423,7 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
         from fastapi.responses import Response
         with db() as con:
             current_user(request, con)
-            row = con.execute('SELECT data FROM pictures WHERE id=? AND (EXISTS(SELECT 1 FROM users WHERE avatar=?) OR EXISTS(SELECT 1 FROM nodes WHERE cover=? AND deleted IS NULL))', (picture_id, picture_id, picture_id)).fetchone()
+            row = con.execute('SELECT data FROM pictures WHERE id=? AND (EXISTS(SELECT 1 FROM users WHERE avatar=? OR banner=?) OR EXISTS(SELECT 1 FROM nodes WHERE cover=? AND deleted IS NULL))', (picture_id, picture_id, picture_id, picture_id)).fetchone()
             if not row:
                 raise HTTPException(404, 'This picture is no longer available.')
             return Response(bytes(row['data']), media_type='image/webp', headers={'Content-Security-Policy': "default-src 'none'; sandbox"})
@@ -563,7 +598,6 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             item = node(con, node_id, deleted=True)
             if item['deleted'] is None or item['trash_root'] != node_id:
                 raise HTTPException(400, 'Move this item to trash first.')
-            # Purging a subtree must also handle independently trashed descendants.
             all_rows = con.execute('WITH RECURSIVE tree AS (SELECT id,kind,cover FROM nodes WHERE id=? UNION ALL SELECT n.id,n.kind,n.cover FROM nodes n JOIN tree t ON n.parent=t.id) SELECT * FROM tree', (node_id,)).fetchall()
             tree = 'WITH RECURSIVE tree(id) AS (SELECT ? UNION ALL SELECT n.id FROM nodes n JOIN tree t ON n.parent=t.id) '
             if con.execute(tree + 'SELECT 1 FROM uploads WHERE node_id IS NULL AND parent IN tree LIMIT 1', (node_id,)).fetchone():
@@ -656,7 +690,7 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
             received = 0
             try:
                 with temp.open('r+b') as stream:
-                    stream.truncate(offset)  # Repair uncommitted bytes after a process interruption.
+                    stream.truncate(offset)
                     stream.seek(offset)
                     async for chunk in request.stream():
                         received += len(chunk)
@@ -666,7 +700,6 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
                     await run_in_threadpool(stream.flush)
                     await run_in_threadpool(os.fsync, stream.fileno())
                 with db() as con:
-                    # A disabled account loses upload access immediately, including mid-request.
                     current_user(request, con, write=True)
                     con.execute('UPDATE uploads SET offset=?,updated=? WHERE id=?', (offset + received, time.time(), upload_id))
             except BaseException:
@@ -691,7 +724,6 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
                 source = temp if temp.exists() else destination
                 if upload['offset'] != upload['size'] or not source.is_file() or source.stat().st_size != upload['size']:
                     raise HTTPException(409, 'Upload is incomplete. Resume it before finishing.')
-                # Use the upload UUID as the object UUID so finalize can recover after a crash.
                 node_id, now = upload_id, time.time()
                 con.execute('INSERT INTO nodes(id,parent,name,kind,size,mime,owner,created,updated) VALUES(?,?,?,"file",?,?,?,?,?)', (node_id, upload['parent'], upload['name'], upload['size'], upload['mime'], user['id'], now, now))
                 if source != destination:

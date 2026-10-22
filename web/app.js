@@ -285,19 +285,192 @@ document.addEventListener('keydown',e=>{if(e.key==='/'&&state.user&&!$('#dialog'
 window.addEventListener('beforeunload',e=>{if(state.uploads.some(u=>u.status==='uploading'||u.status==='queued')){e.preventDefault();e.returnValue='';}});
 async function init(){icons();try{const initialStatus=await api('/status');$('#local-test-banner').hidden=!initialStatus.local_test;if(initialStatus.local_test&&!initialStatus.configured&&!inviteToken){localSetup=true;$('#auth-title').textContent='Set up your local drive';$('#auth-eyebrow').textContent='YOUR LOCAL TEST DRIVE';$('#auth-description').textContent='Choose your local owner account. Your test files and login stay on this PC.';$('#name-label').hidden=false;$('#auth-name').required=true;$('#samples-label').hidden=false;$('#auth-password').minLength=10;$('#auth-password').autocomplete='new-password';$('#auth-password').placeholder='At least 10 characters';$('#auth-submit-label').textContent='Create my local drive';return;}if(inviteToken){const invite=await api('/invite?token='+encodeURIComponent(inviteToken));$('#auth-title').textContent='You’re invited.';$('#auth-eyebrow').textContent='PRIVATE INVITATION';$('#auth-description').textContent=`Join the circle with ${invite.role==='viewer'?'read-only':'upload'} access. Choose a name and password to make yourself at home.`;$('#name-label').hidden=false;$('#auth-name').required=true;$('#auth-email').value=invite.email;$('#auth-email').readOnly=true;$('#auth-password').minLength=10;$('#auth-password').autocomplete='new-password';$('#auth-password').placeholder='At least 10 characters';$('#auth-submit-label').textContent='Join the circle';return;}try{state.user=await api('/me');await enterDrive();}catch(e){if(e.status!==401)throw e;showAuth();const status=await api('/status');$('#setup-note').hidden=status.configured;}}catch(e){$('#auth-error').textContent=e.message;}}
 
-function renderProfile(){
- for(const id of ['#user-avatar','#circle-avatar'])$(id).innerHTML=state.user.avatar_url?`<img src="${esc(state.user.avatar_url)}" alt="">`:esc(state.user.name.slice(0,1).toUpperCase());
- $('#user-name').textContent=state.user.name;
+function renderProfile() {
+  for (const id of ['#user-avatar', '#circle-avatar']) {
+    $(id).innerHTML = state.user.avatar_url
+      ? `<img src="${esc(state.user.avatar_url)}" alt="">`
+      : esc(state.user.name.slice(0, 1).toUpperCase());
+  }
+  $('#user-name').textContent = state.user.name;
+
+  if (state.user.theme_color) {
+    document.documentElement.style.setProperty(
+      '--user-theme-color',
+      state.user.theme_color
+    );
+  }
 }
-function choosePicture(endpoint,onDone){
- const input=$('#picture-input');input.value='';input.onchange=async()=>{const file=input.files[0];if(!file)return;if(file.size>8*1024*1024)return toast('Choose an image smaller than 8 MB.',true);try{toast('Saving picture…');await api(endpoint,{method:'POST',body:file,headers:{'Content-Type':file.type||'application/octet-stream'}});await onDone();await refreshStats();toast('Picture updated.');}catch(e){toast(e.message,true);}finally{input.value='';}};input.click();
+
+function choosePicture(endpoint, onDone) {
+  const input = $('#picture-input');
+  input.value = '';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024)
+      return toast('Choose an image smaller than 8 MB.', true);
+    try {
+      toast('Saving picture…');
+      await api(endpoint, {
+        method: 'POST',
+        body: file,
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      });
+      await onDone();
+      await refreshStats();
+      toast('Picture updated.');
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      input.value = '';
+    }
+  };
+  input.click();
 }
-async function refreshProfile(){state.user=await api('/me');renderProfile();if(state.view==='members')await loadMembers();else await loadFiles();}
-function profileDialog(){
- formDialog('Your profile',`<div class="profile-preview">${avatar(state.user.avatar_url,state.user.name,'avatar large-avatar')}<div><button type="button" class="button subtle" id="change-avatar">${icon('image')} Change picture</button>${state.user.avatar_url?'<button type="button" class="button quiet" id="remove-avatar">Remove picture</button>':''}</div></div><p class="muted">PNG, JPG, WebP or GIF · up to 8 MB. Animated images use their first frame.</p><label>Display name<input name="name" value="${esc(state.user.name)}" required maxlength="60"></label><label>Email<input value="${esc(state.user.email)}" readonly></label>`,async f=>{await api('/me',{method:'PATCH',body:JSON.stringify({name:f.get('name')})});await refreshProfile();$('#dialog').close();toast('Profile updated.');});
- $('#change-avatar').onclick=()=>choosePicture('/me/avatar',async()=>{await refreshProfile();profileDialog();});
- if($('#remove-avatar'))$('#remove-avatar').onclick=async()=>{try{await api('/me/avatar',{method:'DELETE'});await refreshProfile();profileDialog();await refreshStats();toast('Profile picture removed.');}catch(e){toast(e.message,true);}};
+
+async function refreshProfile() {
+  state.user = await api('/me');
+  renderProfile();
+  if (state.view === 'members') await loadMembers();
+  else await loadFiles();
 }
-$('#user-avatar').onclick=$('#profile-button').onclick=profileDialog;
-document.addEventListener('keydown',e=>{if(!state.user||$('#dialog').open||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName))return;if(e.altKey&&e.key==='ArrowUp'&&state.parent){e.preventDefault();$('#nav-up').click();}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='a'&&state.view!=='members'){e.preventDefault();state.items.forEach(i=>state.selected.add(i.id));renderFiles();}});
+
+function profileDialog() {
+  formDialog(
+    'Your profile & settings',
+    `
+  <div class="profile-preview">
+    ${avatar(state.user.avatar_url, state.user.name, 'avatar large-avatar')}
+    <div>
+      <button type="button" class="button subtle" id="change-avatar">${icon('image')} Change avatar</button>
+      ${state.user.avatar_url ? '<button type="button" class="button quiet" id="remove-avatar">Remove avatar</button>' : ''}
+    </div>
+  </div>
+  <p class="muted">Avatar: PNG, JPG, WebP or GIF · up to 8 MB.</p>
+  
+  <div style="margin-top:15px;">
+    <button type="button" class="button subtle" id="change-banner">${icon('image')} ${state.user.banner_url ? 'Change' : 'Add'} profile banner</button>
+    ${state.user.banner_url ? '<button type="button" class="button quiet" id="remove-banner">Remove banner</button>' : ''}
+  </div>
+
+  <label>Display name<input name="name" value="${esc(state.user.name)}" required maxlength="60"></label>
+  <label>Bio / Status<textarea name="bio" rows="2" maxlength="500" placeholder="Tell members about yourself...">${esc(state.user.bio || '')}</textarea></label>
+  <label>Accent Color<input type="color" name="theme_color" value="${esc(state.user.theme_color || '#ac4569')}"></label>
+  <label>Email<input value="${esc(state.user.email)}" readonly></label>
+
+  <hr style="border:0;border-top:1px solid var(--line);margin:20px 0;">
+  <h3>Change Password</h3>
+  <label>Current Password<input type="password" id="current_password" placeholder="Current password"></label>
+  <label>New Password<input type="password" id="new_password" placeholder="At least 6 characters" minlength="6"></label>
+  <button type="button" class="button subtle" id="update-password-btn" style="margin-top:10px;">Update Password</button>
+  `,
+    async (f) => {
+      const themeColor = f.get('theme_color');
+      await api('/me', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: f.get('name'),
+          bio: f.get('bio'),
+          theme_color: themeColor,
+        }),
+      });
+      document.documentElement.style.setProperty(
+        '--user-theme-color',
+        themeColor
+      );
+      await refreshProfile();
+      $('#dialog').close();
+      toast('Profile updated.');
+    }
+  );
+
+  $('#change-avatar').onclick = () =>
+    choosePicture('/me/avatar', async () => {
+      await refreshProfile();
+      profileDialog();
+    });
+  if ($('#remove-avatar'))
+    $('#remove-avatar').onclick = async () => {
+      try {
+        await api('/me/avatar', { method: 'DELETE' });
+        await refreshProfile();
+        profileDialog();
+        await refreshStats();
+        toast('Profile picture removed.');
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+
+  $('#change-banner').onclick = () =>
+    choosePicture('/me/banner', async () => {
+      await refreshProfile();
+      profileDialog();
+    });
+  if ($('#remove-banner'))
+    $('#remove-banner').onclick = async () => {
+      try {
+        await api('/me/banner', { method: 'DELETE' });
+        await refreshProfile();
+        profileDialog();
+        await refreshStats();
+        toast('Banner removed.');
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+
+  $('#update-password-btn').onclick = async () => {
+    const current_password = $('#current_password').value;
+    const new_password = $('#new_password').value;
+    if (!current_password || !new_password)
+      return toast('Please enter both current and new passwords.', true);
+    if (new_password.length < 6)
+      return toast('New password must be at least 6 characters.', true);
+    try {
+      await post('/auth/change-password', { current_password, new_password });
+      $('#current_password').value = '';
+      $('#new_password').value = '';
+      toast('Password changed successfully!');
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+}
+
+$('#user-avatar').onclick = $('#profile-button').onclick = profileDialog;
+document.addEventListener('keydown', (e) => {
+  if (
+    !state.user ||
+    $('#dialog').open ||
+    ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)
+  )
+    return;
+  if (e.altKey && e.key === 'ArrowUp' && state.parent) {
+    e.preventDefault();
+    $('#nav-up').click();
+  }
+  if (
+    (e.ctrlKey || e.metaKey) &&
+    e.key.toLowerCase() === 'a' &&
+    state.view !== 'members'
+  ) {
+    e.preventDefault();
+    state.items.forEach((i) => state.selected.add(i.id));
+    renderFiles();
+  }
+});
+
 init();
+
+
+// Apply user custom theme color on load
+if (user.theme_color) {
+    document.documentElement.style.setProperty('--user-theme-color', user.theme_color);
+}
+
+// Client theme customizer handler
+function applyCustomTheme(hexColor) {
+    document.documentElement.style.setProperty('--user-theme-color', hexColor);
+    // Send to PATCH /api/me with theme_color to persist across devices
+}
