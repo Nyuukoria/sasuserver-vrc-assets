@@ -335,34 +335,52 @@ async function refreshProfile() {
   else await loadFiles();
 }
 
+// Clean & Pretty Profile Dialog
 function profileDialog() {
   formDialog(
     'Your profile & settings',
     `
-  <div class="profile-preview">
+  <div class="banner-preview-box" style="${state.user.banner_url ? `background-image:url(${esc(state.user.banner_url)})` : ''}">
+    <button type="button" class="button subtle" id="change-banner">${icon('image')} ${state.user.banner_url ? 'Change' : 'Add'} banner</button>
+    ${state.user.banner_url ? '<button type="button" class="button quiet" id="remove-banner" style="margin-left:8px;">Remove</button>' : ''}
+  </div>
+
+  <div class="profile-preview" style="margin-bottom:15px;">
     ${avatar(state.user.avatar_url, state.user.name, 'avatar large-avatar')}
     <div>
       <button type="button" class="button subtle" id="change-avatar">${icon('image')} Change avatar</button>
-      ${state.user.avatar_url ? '<button type="button" class="button quiet" id="remove-avatar">Remove avatar</button>' : ''}
+      ${state.user.avatar_url ? '<button type="button" class="button quiet" id="remove-avatar">Remove</button>' : ''}
     </div>
   </div>
-  <p class="muted">Avatar: PNG, JPG, WebP or GIF · up to 8 MB.</p>
-  
-  <div style="margin-top:15px;">
-    <button type="button" class="button subtle" id="change-banner">${icon('image')} ${state.user.banner_url ? 'Change' : 'Add'} profile banner</button>
-    ${state.user.banner_url ? '<button type="button" class="button quiet" id="remove-banner">Remove banner</button>' : ''}
-  </div>
 
-  <label>Display name<input name="name" value="${esc(state.user.name)}" required maxlength="60"></label>
-  <label>Bio / Status<textarea name="bio" rows="2" maxlength="500" placeholder="Tell members about yourself...">${esc(state.user.bio || '')}</textarea></label>
-  <label>Accent Color<input type="color" name="theme_color" value="${esc(state.user.theme_color || '#ac4569')}"></label>
-  <label>Email<input value="${esc(state.user.email)}" readonly></label>
+  <label>Display name
+    <input name="name" value="${esc(state.user.name)}" required maxlength="60">
+  </label>
+
+  <label style="margin-top:12px; display:block;">Bio / Status
+    <textarea name="bio" rows="3" maxlength="500" placeholder="Tell members about yourself...">${esc(state.user.bio || '')}</textarea>
+  </label>
+
+  <label style="margin-top:12px; display:block;">Accent Color
+    <div class="color-picker-row">
+      <input type="color" name="theme_color" id="theme_color_input" value="${esc(state.user.theme_color || '#ac4569')}">
+      <span id="color_hex_label" style="font-size:13px; color:var(--muted);">${esc(state.user.theme_color || '#ac4569')}</span>
+    </div>
+  </label>
+
+  <label style="margin-top:12px; display:block;">Email
+    <input value="${esc(state.user.email)}" readonly style="opacity:0.7;">
+  </label>
 
   <hr style="border:0;border-top:1px solid var(--line);margin:20px 0;">
-  <h3>Change Password</h3>
-  <label>Current Password<input type="password" id="current_password" placeholder="Current password"></label>
-  <label>New Password<input type="password" id="new_password" placeholder="At least 6 characters" minlength="6"></label>
-  <button type="button" class="button subtle" id="update-password-btn" style="margin-top:10px;">Update Password</button>
+  <h3 style="margin-bottom:10px;">Change Password</h3>
+  <label>Current Password
+    <input type="password" id="current_password" placeholder="Current password">
+  </label>
+  <label style="margin-top:10px; display:block;">New Password
+    <input type="password" id="new_password" placeholder="At least 6 characters" minlength="6">
+  </label>
+  <button type="button" class="button subtle" id="update-password-btn" style="margin-top:12px;">Update Password</button>
   `,
     async (f) => {
       const themeColor = f.get('theme_color');
@@ -374,15 +392,17 @@ function profileDialog() {
           theme_color: themeColor,
         }),
       });
-      document.documentElement.style.setProperty(
-        '--user-theme-color',
-        themeColor
-      );
+      document.documentElement.style.setProperty('--user-theme-color', themeColor);
       await refreshProfile();
       $('#dialog').close();
       toast('Profile updated.');
     }
   );
+
+  // Sync color picker HEX text
+  $('#theme_color_input').oninput = (e) => {
+    $('#color_hex_label').textContent = e.target.value;
+  };
 
   $('#change-avatar').onclick = () =>
     choosePicture('/me/avatar', async () => {
@@ -436,6 +456,141 @@ function profileDialog() {
       toast(e.message, true);
     }
   };
+}
+
+// Inspect Member Modal
+async function inspectMember(userId) {
+  try {
+    const member = await api(`/users/${userId}`);
+    const isSelf = member.id === state.user.id;
+    const canManage = state.user.role === 'owner' && !isSelf;
+
+    dialog(
+      'Member Profile',
+      `
+      <div class="member-profile-card">
+        <div class="member-profile-banner" style="${member.banner_url ? `background-image:url(${esc(member.banner_url)})` : ''}"></div>
+        <div class="member-profile-avatar">
+          ${member.avatar_url ? `<img src="${esc(member.avatar_url)}" alt="">` : esc(member.name.slice(0,1).toUpperCase())}
+        </div>
+        <h2 style="margin:5px 0 2px 0;">${esc(member.name)}</h2>
+        <p class="muted" style="font-size:13px; margin:0;">${esc(member.email)} · <span class="role-tag">${esc(member.role)}</span></p>
+        
+        ${member.bio ? `<div class="member-bio">${esc(member.bio)}</div>` : '<p class="muted" style="margin:15px 0; font-size:13px;">No bio added yet.</p>'}
+        
+        <p class="muted" style="font-size:12px;">Joined ${date(member.created)}</p>
+
+        ${canManage ? `
+          <hr style="border:0;border-top:1px solid var(--line);margin:15px 0;">
+          <button class="button danger" id="remove-member-btn" style="width:100%;">${icon('trash')} Remove member from workspace</button>
+        ` : ''}
+      </div>
+    `
+    );
+
+    if (canManage && $('#remove-member-btn')) {
+      $('#remove-member-btn').onclick = async () => {
+        if (!confirm(`Are you sure you want to remove ${member.name} from the workspace?`)) return;
+        try {
+          await api(`/users/${member.id}`, { method: 'DELETE' });
+          $('#dialog').close();
+          if (state.view === 'members') await loadMembers();
+          await refreshStats();
+          toast(`${member.name} was removed.`);
+        } catch (e) {
+          toast(e.message, true);
+        }
+      };
+    }
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+// Make Member List Rows Clickable
+async function loadMembers() {
+  const data = await api('/admin');
+  $('#members-list').innerHTML = data.users
+    .map(
+      (user) => `
+    <div class="member-row ${user.active ? '' : 'inactive'}" style="cursor:pointer;" data-member-id="${esc(user.id)}">
+      ${avatar(user.avatar_url, user.name, 'avatar')}
+      <div class="member-info">
+        <strong>${esc(user.name)}${user.id === state.user.id ? ' (you)' : ''}</strong>
+        <small>${esc(user.email)}</small>
+      </div>
+      <span class="role-tag">${esc(user.role)}</span>
+    </div>`
+    )
+    .join('');
+
+  $$('[data-member-id]').forEach((el) => {
+    el.onclick = () => inspectMember(el.dataset.memberId);
+  });
+
+  $('#invites-list').innerHTML = data.invites.length
+    ? data.invites
+        .map((inv) => {
+          const status = inv.used
+            ? 'Accepted'
+            : inv.revoked
+            ? 'Revoked'
+            : inv.expires < Date.now() / 1000
+            ? 'Expired'
+            : 'Pending';
+          return `<div class="member-row"><span class="avatar">${icon(
+            'user-plus'
+          )}</span><div class="member-info"><strong>${esc(
+            inv.email
+          )}</strong><small>${esc(inv.role)} access · expires ${date(
+            inv.expires
+          )}</small></div><span class="role-tag">${status}</span>${
+            status === 'Pending'
+              ? `<button class="button quiet" data-revoke="${esc(
+                  inv.id
+                )}">Revoke</button>`
+              : ''
+          }</div>`;
+        })
+        .join('')
+    : '<p class="muted">No invitations yet. Create one to give someone access.</p>';
+
+  $$('[data-revoke]').forEach((el) =>
+    (el.onclick = async () => {
+      try {
+        await api(`/invites/${el.dataset.revoke}`, { method: 'DELETE' });
+        await loadMembers();
+        toast('Invitation revoked.');
+      } catch (e) {
+        toast(e.message, true);
+      }
+    })
+  );
+}
+
+// Make Members Dashboard Card Clickable
+async function refreshStats() {
+  const stats = await api('/stats');
+  const percent = Math.min(100, (stats.used / stats.capacity) * 100);
+  $('#storage-percent').textContent = `${
+    percent < 1 && percent > 0 ? '<1' : percent.toFixed(0)
+  }%`;
+  $('#storage-bar').style.width = `${Math.max(stats.used ? 1 : 0, percent)}%`;
+  $('#storage-label').textContent = `${bytes(stats.used)} of ${bytes(
+    stats.capacity
+  )} used`;
+  $('#file-count').textContent = stats.files;
+  $('#stat-files').innerHTML = `${stats.files.toLocaleString()} <span>files</span>`;
+  $('#stat-folders').innerHTML = `${stats.folders.toLocaleString()} <span>folders</span>`;
+
+  const memberCard = $('#stat-members').closest('.overview-card');
+  if (memberCard) {
+    memberCard.classList.add('clickable-card');
+    memberCard.onclick = () => navigate('members');
+  }
+  $('#stat-members').innerHTML = `${stats.members} <span>${
+    stats.members === 1 ? 'person' : 'people'
+  }</span>`;
 }
 
 $('#user-avatar').onclick = $('#profile-button').onclick = profileDialog;

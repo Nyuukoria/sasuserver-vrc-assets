@@ -17,3 +17,119 @@
     --accent: var(--user-theme-color, #ac4569);
     --accent-dark: var(--user-theme-dark, #933453);
 }
+
+/* Clean Form Controls for Profile Dialog */
+.dialog-form textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.color-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.color-picker-row input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  width: 38px;
+  height: 38px;
+  cursor: pointer;
+  background: transparent;
+  padding: 0;
+}
+
+.color-picker-row input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.color-picker-row input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+
+.banner-preview-box {
+  width: 100%;
+  height: 100px;
+  border-radius: var(--radius-m);
+  background-size: cover;
+  background-position: center;
+  background-color: var(--surface);
+  border: 1px dashed var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+/* Clickable Member Cards & Modal */
+.clickable-card {
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.clickable-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.member-profile-card {
+  text-align: center;
+  padding: 10px 0;
+}
+
+.member-profile-banner {
+  height: 110px;
+  border-radius: var(--radius-m);
+  background-size: cover;
+  background-position: center;
+  background-color: var(--surface);
+  margin-bottom: -40px;
+}
+
+.member-profile-avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: 4px solid var(--bg-card);
+  margin: 0 auto 10px auto;
+  position: relative;
+  overflow: hidden;
+  background: var(--accent);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: bold;
+}
+
+.member-profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.member-bio {
+  background: var(--surface);
+  border-radius: var(--radius-m);
+  padding: 12px;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 15px 0;
+  text-align: left;
+  white-space: pre-wrap;
+}

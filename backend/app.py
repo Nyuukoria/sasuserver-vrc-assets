@@ -250,6 +250,32 @@ def create_app(state_dir=None, storage_dir=None, origin=None, secure=None, local
     def health():
         return {'ok': True}
 
+    @app.get('/api/users/{user_id}')
+    def get_user_profile(user_id: str, request: Request):
+        with db() as con:
+            current_user(request, con)
+            row = con.execute('SELECT id, name, email, role, bio, theme_color, created, avatar, banner, active FROM users WHERE id=?', (user_id,)).fetchone()
+            if not row:
+                raise HTTPException(404, 'User not found.')
+            return {
+                **dict(row),
+                'avatar_url': picture_url(row['avatar']),
+                'banner_url': picture_url(row['banner'])
+            }
+
+    @app.delete('/api/users/{user_id}')
+    def delete_user(user_id: str, request: Request):
+        with db() as con:
+            current_user(request, con, owner=True)
+            target = con.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
+            if not target or target['role'] == 'owner':
+                raise HTTPException(400, 'The workspace owner cannot be removed.')
+            # Deactivate and clear session
+            con.execute('UPDATE users SET active=0 WHERE id=?', (user_id,))
+            con.execute('DELETE FROM sessions WHERE user_id=?', (user_id,))
+            audit(con, current_user(request, con), 'removed user', target['email'])
+            return {'ok': True}
+
     def is_loopback(request):
         try:
             return bool(request.client and ipaddress.ip_address(request.client.host).is_loopback)
