@@ -617,15 +617,3 @@ document.addEventListener('keydown', (e) => {
 });
 
 init();
-
-
-// Apply user custom theme color on load
-if (user.theme_color) {
-    document.documentElement.style.setProperty('--user-theme-color', user.theme_color);
-}
-
-// Client theme customizer handler
-function applyCustomTheme(hexColor) {
-    document.documentElement.style.setProperty('--user-theme-color', hexColor);
-    // Send to PATCH /api/me with theme_color to persist across devices
-}
